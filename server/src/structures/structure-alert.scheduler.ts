@@ -20,7 +20,7 @@ export class StructureAlertScheduler {
     let total = 0;
     for (const c of corps) {
       try {
-        const r = await this.alertSvc.generateAlerts(c.id);
+        const r = await this.alertSvc.generateAlerts({ corporationId: c.id });
         total += r.generated;
       } catch (e: any) {
         this.logger.warn(`结构提醒生成失败 ${c.name}: ${e.message}`);

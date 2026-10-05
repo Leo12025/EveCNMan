@@ -11,8 +11,11 @@ export class StructureAlertController {
 
   @Post('generate')
   @Roles('admin', 'officer')
-  generate(@Query('corporationId') corporationId: string) {
-    return this.svc.generateAlerts(+corporationId);
+  generate(@Query('corporationId') corporationId?: string, @Query('allianceId') allianceId?: string) {
+    return this.svc.generateAlerts({
+      corporationId: corporationId ? +corporationId : undefined,
+      allianceId: allianceId ? +allianceId : undefined,
+    });
   }
 
   @Get()

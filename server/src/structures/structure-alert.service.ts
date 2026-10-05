@@ -12,9 +12,10 @@ export class StructureAlertService {
   ) {}
 
   /** 生成燃料/易损窗口提醒（幂等：同类结构同类型当天只生成一次） */
-  async generateAlerts(corporationId: number) {
-    const list = await this.structures.find({ where: { corporationId } });
+  async generateAlerts(filter: { corporationId?: number; allianceId?: number }) {
+    const list = await this.structures.find({ where: filter });
     const created: StructureAlert[] = [];
+    const orgId = filter.corporationId ?? filter.allianceId ?? 0;
     const today = new Date().toDateString();
     for (const s of list) {
       // 燃料不足（<24 小时提醒，<6 小时严重）
@@ -28,7 +29,7 @@ export class StructureAlertService {
           const a = await this.alerts.save(
             this.alerts.create({
               structureId: Number(s.id),
-              orgId: corporationId,
+              orgId,
               type: 'fuel-low',
               message: `结构 ${s.typeName || s.id}（${s.systemName || ''}）燃料仅剩 ${s.fuelExpiresHours} 小时，请及时补给`,
               severity,
@@ -51,7 +52,7 @@ export class StructureAlertService {
             const a = await this.alerts.save(
               this.alerts.create({
                 structureId: Number(s.id),
-                orgId: corporationId,
+                orgId,
                 type: 'vulnerable',
                 message: `结构 ${s.typeName || s.id}（${s.systemName || ''}）将于 ${start.toLocaleString()} 进入易损窗口`,
                 severity: 'warning',

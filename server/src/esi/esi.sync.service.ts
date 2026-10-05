@@ -14,7 +14,7 @@ import { MembersService } from '../members/members.service';
 import { EsiService } from './esi.service';
 import { StructuresService } from '../structures/structures.service';
 import { NotifyService } from '../notify/notify.service';
-import { mockCorporationMembers, mockCorporationAssets, mockTaxRecords, mockCorporationStructures, mockStructureNames, CORPS, ALLIANCES } from './mock-data';
+import { mockCorporationMembers, mockCorporationAssets, mockTaxRecords, mockCorporationStructures, mockStructureNames, mockSystemCosmic, mockAllianceStructures, CORPS, ALLIANCES } from './mock-data';
 
 const TAX_REF_TYPES = ['player_tax', 'player_donation'];
 
@@ -45,6 +45,7 @@ export const ESI_SCOPES = {
   CORP_INDUSTRY: 'esi-industry.read_corporation_jobs.v1',
   CORP_CONTACTS: 'esi-corporations.read_contacts.v1',
   ALLIANCE_CONTACTS: 'esi-alliances.read_contacts.v1',
+  ALLIANCE_STRUCTURES: 'esi-alliances.read_structures.v1',
 };
 
 /** 网易 ESI 的军团描述偶以 Python repr 文本（如 u'...\u8fd9...'）存储，这里还原成可读文本 */
@@ -94,6 +95,8 @@ export class EsiSyncService {
   private groupNames = new Map<number, string>();
   /** 空间站名称缓存：station_id -> 名称（universe/stations） */
   private stationNames = new Map<number, string>();
+  /** 星系宇宙层级缓存：system_id -> { constellationId, regionId, regionName }（结构星域回填用） */
+  private cosmicCache = new Map<number, { constellationId: number; regionId: number; regionName: string }>();
   /** 正在后台回填名称的角色（避免并发重复请求） */
   private nameRefreshing = new Set<number>();
 
@@ -148,6 +151,44 @@ export class EsiSyncService {
     } catch {}
     this.stationNames.set(stationId, name);
     return name;
+  }
+
+  /**
+   * 解析星系所属星座/星域：system → constellation → region 三级链路。
+   * 结果进 cosmicCache，供结构星域回填；任一环节失败则该星系跳过。
+   */
+  private async resolveSystemCosmic(
+    systemIds: number[],
+  ): Promise<Record<number, { constellationId: number; regionId: number; regionName: string }>> {
+    const out: Record<number, { constellationId: number; regionId: number; regionName: string }> = {};
+    for (const sid of systemIds) {
+      if (this.cosmicCache.has(sid)) {
+        out[sid] = this.cosmicCache.get(sid)!;
+        continue;
+      }
+      try {
+        const sys = await this.esi.getUniverseSystem(sid);
+        const constellationId = sys?.constellation_id;
+        if (constellationId == null) continue;
+        const con = await this.esi.getUniverseConstellation(constellationId);
+        const regionId = con?.region_id;
+        let regionName: string | null = null;
+        if (regionId != null) {
+          const region = await this.esi.getUniverseRegion(regionId);
+          regionName = region?.name ?? null;
+        }
+        const info = { constellationId, regionId, regionName } as {
+          constellationId: number;
+          regionId: number;
+          regionName: string;
+        };
+        this.cosmicCache.set(sid, info);
+        out[sid] = info;
+      } catch {
+        // 星系无效/解析失败，跳过
+      }
+    }
+    return out;
   }
 
   /** 克隆所在位置名称：空间站走公开接口；玩家建筑先查本地结构库，再尝试带角色 token 解析 */
@@ -908,6 +949,18 @@ export class EsiSyncService {
     return null;
   }
 
+  /** 选取可作为联盟建筑拉取代理的账号（需具备 esi-alliances.read_structures.v1） */
+  private async findAllianceDirector(org: Organization): Promise<EveAccount | null> {
+    const members = await this.memberships.find({ where: { orgId: org.id, isActive: true } });
+    for (const m of members.slice(0, 100)) {
+      const account = await this.accounts.findOne({ where: { characterId: m.characterId } });
+      if (account?.accessToken && (account.scopes || '').split(/\s+/).includes(ESI_SCOPES.ALLIANCE_STRUCTURES)) {
+        return account;
+      }
+    }
+    return null;
+  }
+
   private async syncOrgFromEsi(org: Organization, director: EveAccount, counts: Record<string, number>) {
     const scopes = (director.scopes || '').split(/\s+/).filter(Boolean);
     const id = org.id;
@@ -1001,7 +1054,8 @@ export class EsiSyncService {
       try {
         const raw = await this.withToken(director, (t) => this.esi.getCorporationStructures(id, t));
         counts.structures = await this.structures.saveStructures(id, raw || []);
-        await this.structures.resolveNames(id, (ids) => this.esi.resolveNames(ids));
+        await this.structures.resolveNames({ corporationId: id }, (ids) => this.esi.resolveNames(ids));
+        await this.structures.enrichLocations({ corporationId: id }, (sids) => this.resolveSystemCosmic(sids));
       } catch (e) {
         this.logger.warn(`军团 ${id} 结构失败: ${e.message}`);
       }
@@ -1166,7 +1220,19 @@ export class EsiSyncService {
         }
       }
     }
-    // 3) CEO/创建人/联盟创建者角色名（universe/names 一次批量解析后写回）
+    // 3) 联盟建筑：需具备 esi-alliances.read_structures.v1 的成员账号；无则跳过（不影响其余同步）
+    try {
+      const director = await this.findAllianceDirector(org);
+      if (director?.accessToken) {
+        const raw = await this.withToken(director, (t) => this.esi.getAllianceStructures(org.id, t));
+        counts.structures = await this.structures.saveAllianceStructures(org.id, raw || []);
+        await this.structures.resolveNames({ allianceId: org.id }, (ids) => this.esi.resolveNames(ids));
+        await this.structures.enrichLocations({ allianceId: org.id }, (sids) => this.resolveSystemCosmic(sids));
+      }
+    } catch (e) {
+      this.logger.warn(`联盟 ${org.id} 结构失败: ${e.message}`);
+    }
+    // 4) CEO/创建人/联盟创建者角色名（universe/names 一次批量解析后写回）
     await this.resolveLeaderNames(leaderRows);
     counts.corps = (corps || []).length;
     counts.registered = registered;
@@ -1187,6 +1253,13 @@ export class EsiSyncService {
     counts.alliance = 1;
     const corps = await this.orgs.find({ where: { type: OrgType.CORPORATION, allianceId: org.id } });
     counts.corps = corps.length;
+    // 联盟建筑（演示数据）
+    const structures = mockAllianceStructures(org.id);
+    if (structures.length) {
+      counts.structures = await this.structures.saveAllianceStructures(org.id, structures);
+      await this.structures.resolveNames({ allianceId: org.id }, async () => mockStructureNames(structures));
+      await this.structures.enrichLocations({ allianceId: org.id }, async (sids) => mockSystemCosmic(sids));
+    }
   }
 
   // ======================================================== 落库工具 ========
@@ -1380,7 +1453,8 @@ export class EsiSyncService {
       const structures = mockCorporationStructures(org.id);
       if (structures.length) {
         counts.structures = await this.structures.saveStructures(org.id, structures);
-        await this.structures.resolveNames(org.id, async () => mockStructureNames(structures));
+        await this.structures.resolveNames({ corporationId: org.id }, async () => mockStructureNames(structures));
+        await this.structures.enrichLocations({ corporationId: org.id }, async (sids) => mockSystemCosmic(sids));
       }
     }
   }

@@ -29,7 +29,10 @@ export const userApi = {
 
 export const structureApi = {
   list: (params?: any) => client.get('/structures', { params }),
-  stats: (corporationId?: number) => client.get('/structures/stats', { params: corporationId ? { corporationId } : undefined }),
+  stats: (corporationId?: number, allianceId?: number) =>
+    client.get('/structures/stats', {
+      params: corporationId ? { corporationId } : allianceId ? { allianceId } : undefined,
+    }),
   updateNote: (id: string, note: string) => client.post(`/structures/${id}/note`, { note }),
 };
 

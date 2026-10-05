@@ -126,14 +126,14 @@ const STRUCTURE_TYPE_POOL = [
 ];
 
 const STRUCTURE_SYSTEM_POOL = [
-  { id: 30005042, name: '欧顿星系' },
-  { id: 30005043, name: '佛伦星系' },
-  { id: 30005044, name: '新加迭里星系' },
-  { id: 30005045, name: '维拉塞尔星系' },
-  { id: 30005046, name: '希德利星系' },
-  { id: 30005047, name: '米彻尔星系' },
-  { id: 30004996, name: '奥伊尔星系' },
-  { id: 30004997, name: '迪奥维星系' },
+  { id: 30005042, name: '欧顿星系', constellationId: 20000452, regionId: 10000037, regionName: '北境星域' },
+  { id: 30005043, name: '佛伦星系', constellationId: 20000453, regionId: 10000037, regionName: '北境星域' },
+  { id: 30005044, name: '新加迭里星系', constellationId: 20000454, regionId: 10000037, regionName: '北境星域' },
+  { id: 30005045, name: '维拉塞尔星系', constellationId: 20000455, regionId: 10000037, regionName: '北境星域' },
+  { id: 30005046, name: '希德利星系', constellationId: 20000456, regionId: 10000037, regionName: '北境星域' },
+  { id: 30005047, name: '米彻尔星系', constellationId: 20000457, regionId: 10000037, regionName: '北境星域' },
+  { id: 30004996, name: '奥伊尔星系', constellationId: 20000458, regionId: 10000037, regionName: '北境星域' },
+  { id: 30004997, name: '迪奥维星系', constellationId: 20000459, regionId: 10000037, regionName: '北境星域' },
 ];
 
 /** 军团建筑（Upwell 结构等），结构与 ESI /corporations/{id}/structures/ 返回字段对齐 */
@@ -173,6 +173,43 @@ export function mockStructureNames(raw: Array<Record<string, unknown>>): Record<
     if (s) map[s.id] = { name: s.name, category: 'solar_system' };
   }
   return map;
+}
+
+/** mock 星系 → 星座/星域映射，供 StructuresService.enrichLocations 使用 */
+export function mockSystemCosmic(systemIds: number[]): Record<number, { constellationId: number; regionId: number; regionName: string }> {
+  const map: Record<number, { constellationId: number; regionId: number; regionName: string }> = {};
+  for (const s of STRUCTURE_SYSTEM_POOL) {
+    if (systemIds.includes(s.id)) {
+      map[s.id] = { constellationId: s.constellationId, regionId: s.regionId, regionName: s.regionName };
+    }
+  }
+  return map;
+}
+
+/**
+ * 联盟建筑（演示数据）。对齐 esi-alliances.read_structures.v1 返回字段：
+ * 仅含 structure_id / type_id / system_id / profile_id / reinforcing_time / vulnerable_*，
+ * 不含 state/fuel/services（ESI 联盟端点不提供）。
+ */
+export function mockAllianceStructures(allianceId: number): Array<Record<string, unknown>> {
+  const seed = allianceId % 997;
+  const count = 2 + (seed % 3); // 2~4 个建筑
+  const list = [];
+  for (let i = 0; i < count; i++) {
+    const t = STRUCTURE_TYPE_POOL[(seed + i * 3) % STRUCTURE_TYPE_POOL.length];
+    const s = STRUCTURE_SYSTEM_POOL[(seed + i * 2) % STRUCTURE_SYSTEM_POOL.length];
+    const vulStart = new Date(Date.now() + (86400000 + i * 7200000)).toISOString();
+    list.push({
+      structure_id: 1_030_000_000_000 + seed * 100_000 + i * 1000,
+      type_id: t.id,
+      system_id: s.id,
+      profile_id: null,
+      reinforcing_time: new Date(Date.now() + (43200000 + i * 3600000)).toISOString(),
+      vulnerable_start_time: vulStart,
+      vulnerable_end_time: new Date(new Date(vulStart).getTime() + 172800000).toISOString(),
+    });
+  }
+  return list;
 }
 
 export { CORPS, ALLIANCES };

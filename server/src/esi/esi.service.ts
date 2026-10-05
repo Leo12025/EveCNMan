@@ -86,6 +86,7 @@ export const CORP_SCOPES = [
   'esi-corporations.read_standings.v1',
   'esi-corporations.read_structures.v1',
   'esi-industry.read_corporation_jobs.v1',
+  'esi-alliances.read_structures.v1',
   'esi-killmails.read_corporation_killmails.v1',
   'esi-planets.read_customs_offices.v1',
 ];
@@ -539,6 +540,10 @@ export class EsiService {
   }
   getCorporationStructures(corporationId: number, token: string) {
     return this.getAll<any>(`/corporations/${corporationId}/structures/`, token);
+  }
+  /** 联盟建筑：esi-alliances.read_structures.v1，返回结构较少（无 state/fuel/services/acl） */
+  getAllianceStructures(allianceId: number, token: string) {
+    return this.getAll<any>(`/alliances/${allianceId}/structures/`, token);
   }
   getCorporationStarbases(corporationId: number, token: string) {
     return this.getAll<any>(`/corporations/${corporationId}/starbases/`, token);

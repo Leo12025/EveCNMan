@@ -1,18 +1,25 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
-/** 军团建筑（Upwell 结构 + 前哨 + POCO 等），来自 esi-corporations.read_structures.v1 */
+/** 军团建筑 / 联盟建筑（Upwell 结构 + 前哨 + POCO 等）。
+ *  军团建筑来自 esi-corporations.read_structures.v1，联盟建筑来自 esi-alliances.read_structures.v1。
+ *  二者通过 corporationId / allianceId 区分：联盟建筑仅 allianceId 有值、corporationId 为 null。 */
 @Entity('structures')
 @Index(['corporationId'])
+@Index(['allianceId'])
 @Index(['typeId'])
 @Index(['systemId'])
 export class Structure {
-  /** 建筑实例 ID（ESI structure_id，唯一） */
+  /** 建筑实例 ID（ESI structure_id，全局唯一） */
   @PrimaryColumn({ type: 'bigint' })
   id: string;
 
-  /** 所属军团 ID */
-  @Column({ type: 'integer' })
-  corporationId: number;
+  /** 所属军团 ID（联盟建筑为 null） */
+  @Column({ type: 'integer', nullable: true })
+  corporationId: number | null;
+
+  /** 所属联盟 ID（军团建筑为 null；联盟建筑端点不返回 owning corporation，故仅记录联盟） */
+  @Column({ type: 'integer', nullable: true })
+  allianceId: number | null;
 
   /** 建筑类型 type_id（星城/精炼厂/钻井平台等） */
   @Column({ type: 'integer' })
@@ -61,6 +68,10 @@ export class Structure {
   /** 下一次 vulnerable 窗口结束（ISO） */
   @Column({ type: 'varchar', nullable: true })
   nextVulnerableEnd: string | null;
+
+  /** 加固时间（ISO，来自 esi-alliances.read_structures.v1 的 reinforcing_time） */
+  @Column({ type: 'varchar', nullable: true })
+  reinforcingTime: string | null;
 
   /** 服务模块列表（JSON 字符串） */
   @Column({ type: 'text', nullable: true })

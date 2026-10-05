@@ -8,6 +8,7 @@ export class StructuresController {
   @Get()
   list(
     @Query('corporationId') corporationId?: string,
+    @Query('allianceId') allianceId?: string,
     @Query('systemId') systemId?: string,
     @Query('typeId') typeId?: string,
     @Query('state') state?: string,
@@ -17,6 +18,7 @@ export class StructuresController {
   ) {
     return this.service.list({
       corporationId: corporationId ? Number(corporationId) : undefined,
+      allianceId: allianceId ? Number(allianceId) : undefined,
       systemId: systemId ? Number(systemId) : undefined,
       typeId: typeId ? Number(typeId) : undefined,
       state,
@@ -27,8 +29,11 @@ export class StructuresController {
   }
 
   @Get('stats')
-  stats(@Query('corporationId') corporationId?: string) {
-    return this.service.stats(corporationId ? Number(corporationId) : undefined);
+  stats(@Query('corporationId') corporationId?: string, @Query('allianceId') allianceId?: string) {
+    return this.service.stats(
+      corporationId ? Number(corporationId) : undefined,
+      allianceId ? Number(allianceId) : undefined,
+    );
   }
 
   @Post(':id/note')

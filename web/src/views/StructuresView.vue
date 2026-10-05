@@ -2,13 +2,20 @@
   <div>
     <div class="toolbar">
       <div class="toolbar-left">
-        <el-select v-model="query.corporationId" placeholder="全部军团" clearable size="small" style="width: 200px" @change="load">
+        <el-select v-model="query.ownerType" placeholder="维度" size="small" style="width: 130px" @change="onOwnerChange">
+          <el-option label="军团建筑" value="corporation" />
+          <el-option label="联盟建筑" value="alliance" />
+        </el-select>
+        <el-select v-if="query.ownerType === 'corporation'" v-model="query.corporationId" placeholder="全部军团" clearable size="small" style="width: 200px" @change="onFilterChange">
           <el-option v-for="o in corpOptions" :key="o.id" :label="o.name" :value="o.id" />
         </el-select>
-        <el-select v-model="query.state" placeholder="全部状态" clearable size="small" style="width: 180px" @change="load">
+        <el-select v-else v-model="query.allianceId" placeholder="全部联盟" clearable size="small" style="width: 200px" @change="onFilterChange">
+          <el-option v-for="o in allianceOptions" :key="o.id" :label="o.name" :value="o.id" />
+        </el-select>
+        <el-select v-model="query.state" placeholder="全部状态" clearable size="small" style="width: 180px" @change="onFilterChange">
           <el-option v-for="s in states" :key="s" :label="s" :value="s" />
         </el-select>
-        <el-input v-model="query.search" placeholder="搜索类型/星系/备注/ID" clearable size="small" style="width: 220px" @input="load" />
+        <el-input v-model="query.search" placeholder="搜索类型/星系/备注/ID" clearable size="small" style="width: 220px" @input="onFilterChange" />
       </div>
       <div class="toolbar-right">
         <el-tag size="small" type="info">共 {{ total }} 个建筑</el-tag>
@@ -44,6 +51,9 @@
       </el-table-column>
       <el-table-column label="下次易损窗口" min-width="200">
         <template #default="{ row }">{{ row.nextVulnerableStart ? fmtDateTime(row.nextVulnerableStart) : '-' }}</template>
+      </el-table-column>
+      <el-table-column label="加固时间" min-width="170">
+        <template #default="{ row }">{{ row.reinforcingTime ? fmtDateTime(row.reinforcingTime) : '-' }}</template>
       </el-table-column>
       <el-table-column label="备注" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.note || '-' }}</template>
@@ -86,18 +96,32 @@ const items = ref<any[]>([]);
 const total = ref(0);
 const loading = ref(false);
 const corpOptions = ref<any[]>([]);
+const allianceOptions = ref<any[]>([]);
 const stats = ref<any>(null);
 const statsLoading = ref(false);
 const states = ['online', 'shield_vulnerable', 'armor_vulnerable', 'hull_vulnerable', 'anchoring', 'unanchoring', 'anchor_vulnerable', 'fitting_invulnerable'];
 
-const query = reactive({ corporationId: undefined as number | undefined, state: undefined as string | undefined, search: '', page: 1, pageSize: 50 });
+const query = reactive({
+  ownerType: 'corporation' as 'corporation' | 'alliance',
+  corporationId: undefined as number | undefined,
+  allianceId: undefined as number | undefined,
+  state: undefined as string | undefined,
+  search: '',
+  page: 1,
+  pageSize: 50,
+});
 
 const noteVisible = ref(false);
 const noteForm = reactive({ id: '', note: '' });
 const saving = ref(false);
 
 onMounted(async () => {
-  corpOptions.value = (await orgApi.list({ managedOnly: true, type: 'corporation' })).filter((o: any) => o.type === 'corporation');
+  const [corps, alliances] = await Promise.all([
+    orgApi.list({ managedOnly: true, type: 'corporation' }),
+    orgApi.list({ managedOnly: true, type: 'alliance' }),
+  ]);
+  corpOptions.value = (corps || []).filter((o: any) => o.type === 'corporation');
+  allianceOptions.value = (alliances || []).filter((o: any) => o.type === 'alliance');
   load();
   loadStats();
 });
@@ -106,7 +130,8 @@ async function load() {
   loading.value = true;
   try {
     const res = await structureApi.list({
-      corporationId: query.corporationId,
+      corporationId: query.ownerType === 'corporation' ? query.corporationId : undefined,
+      allianceId: query.ownerType === 'alliance' ? query.allianceId : undefined,
       state: query.state,
       search: query.search || undefined,
       page: query.page,
@@ -122,10 +147,30 @@ async function load() {
 async function loadStats() {
   statsLoading.value = true;
   try {
-    stats.value = await structureApi.stats(query.corporationId);
+    stats.value = await structureApi.stats(
+      query.ownerType === 'corporation' ? query.corporationId : undefined,
+      query.ownerType === 'alliance' ? query.allianceId : undefined,
+    );
   } finally {
     statsLoading.value = false;
   }
+}
+
+/** 切换军团/联盟维度时清空另一维度的筛选 */
+function onOwnerChange() {
+  query.corporationId = undefined;
+  query.allianceId = undefined;
+  query.state = undefined;
+  query.page = 1;
+  load();
+  loadStats();
+}
+
+/** 维度内筛选变化：重置分页后重载 */
+function onFilterChange() {
+  query.page = 1;
+  load();
+  loadStats();
 }
 
 function stateType(state: string) {
