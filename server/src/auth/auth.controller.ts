@@ -71,6 +71,13 @@ export class AuthController {
     return this.auth.loginWithPassword(username, password);
   }
 
+  /** EVE 角色身份切换到其归属的平台账号（验证平台账号密码） */
+  @UseGuards(JwtAuthGuard)
+  @Post('switch-to-platform')
+  switchToPlatform(@CurrentUser() user: AuthUser, @Body('password') password: string) {
+    return this.auth.switchToPlatform(user.sub, password);
+  }
+
   /** 未登录 SSO 登录：粘贴弹窗授权完成后的回调 URL 完成登录 */
   @Post('sso-login')
   ssoLogin(@Body('url') url: string) {

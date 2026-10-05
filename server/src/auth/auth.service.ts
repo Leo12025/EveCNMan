@@ -91,8 +91,33 @@ export class AuthService {
   private async scopeAccounts(userId: number): Promise<EveAccount[]> {
     return this.accounts.find({
       where: [{ user: { id: userId } }, { platformUser: { id: userId } }],
+      relations: ['platformUser'],
       order: { id: 'ASC' },
     });
+  }
+
+  /** 把 EveAccount 序列化为前端视图（含平台绑定信息，供判断是否可切换平台） */
+  private toAccountView(a: EveAccount) {
+    const now = Date.now();
+    return {
+      id: a.id,
+      characterId: a.characterId,
+      characterName: a.characterName,
+      corporationId: a.corporationId,
+      corporationName: a.corporationName,
+      allianceId: a.allianceId,
+      allianceName: a.allianceName,
+      avatarUrl: a.avatarUrl,
+      scopes: a.scopes || '',
+      isMain: a.isMain,
+      auth: this.esi.classifyScopes(a.scopes),
+      tokenExpired: !a.tokenExpiresAt || a.tokenExpiresAt.getTime() < now,
+      lastSyncedAt: a.lastSyncedAt,
+      createdAt: a.createdAt,
+      /** 是否归属某个平台账号（已被聚合并可切换到平台角色） */
+      platformBound: !!a.platformUser,
+      platformUsername: a.platformUser?.username ?? null,
+    };
   }
 
   /** 确保某角色的独立身份用户存在（username = eve:<角色ID>，kind=eve） */
@@ -314,23 +339,7 @@ export class AuthService {
   /** 当前用户角色列表（含 token 状态）：平台账号为名下聚合角色的并集 */
   async accountsOf(userId: number) {
     const accounts = await this.scopeAccounts(userId);
-    const now = Date.now();
-    return accounts.map((a) => ({
-      id: a.id,
-      characterId: a.characterId,
-      characterName: a.characterName,
-      corporationId: a.corporationId,
-      corporationName: a.corporationName,
-      allianceId: a.allianceId,
-      allianceName: a.allianceName,
-      avatarUrl: a.avatarUrl,
-      scopes: a.scopes || '',
-      isMain: a.isMain,
-      auth: this.esi.classifyScopes(a.scopes),
-      tokenExpired: !a.tokenExpiresAt || a.tokenExpiresAt.getTime() < now,
-      lastSyncedAt: a.lastSyncedAt,
-      createdAt: a.createdAt,
-    }));
+    return accounts.map((a) => this.toAccountView(a));
   }
 
   /** 平台账号登录（用户名 + 密码） */
@@ -348,6 +357,46 @@ export class AuthService {
     if (!user.isActive) throw new UnauthorizedException('账号已停用，请联系管理员');
     const token = this.sign(user);
     return { token, user: await this.me(user.id) };
+  }
+
+  /**
+   * EVE 角色身份切换到其归属的平台账号（需验证平台账号密码）。
+   * 适用场景：EVE 角色 SSO 登录后仅拥有自身权限（role=member）；若该角色已绑定到某平台账号，
+   * 角色持有者可在身份更新/授权后，通过验证平台账号密码「切换」到平台账号会话，获得平台权限
+   * （名下所有聚合角色的并集）。当前若已是平台账号则无需切换。
+   */
+  async switchToPlatform(userId: number, password: string): Promise<{ token: string; user: any }> {
+    const identity = await this.users.findOne({ where: { id: userId } });
+    if (!identity) throw new UnauthorizedException('用户不存在');
+    if (identity.kind === 'platform') {
+      throw new BadRequestException('当前已是平台账号，无需切换');
+    }
+
+    // 找到该 EVE 角色身份对应的账号（user=角色独立身份），取其归属平台账号
+    const account = await this.accounts.findOne({
+      where: { user: { id: userId } },
+      relations: ['user', 'platformUser'],
+    });
+    const platform = account?.platformUser ?? null;
+    if (!platform || platform.kind !== 'platform') {
+      throw new BadRequestException('当前 EVE 角色未绑定平台账号，无法切换到平台账号（请先由平台账号绑定该角色）');
+    }
+
+    // 显式加载平台账号密码哈希（passwordHash 标记为 select:false，不会随普通查询返回）
+    const platformWithSecret = await this.users
+      .createQueryBuilder('u')
+      .addSelect('u.passwordHash')
+      .where('u.id = :id', { id: platform.id })
+      .getOne();
+    if (!platformWithSecret?.passwordHash) {
+      throw new BadRequestException('该平台账号未设置密码，无法切换（请先到用户管理为该平台账号设置密码）');
+    }
+    if (!verifyPassword(password || '', platformWithSecret.passwordHash)) {
+      throw new UnauthorizedException('平台账号密码错误，切换失败');
+    }
+
+    const token = this.sign(platform);
+    return { token, user: await this.me(platform.id) };
   }
 
   /** 演示登录（未配置 SSO 时用于本地体验）；演示账号为平台账号，可聚合多个角色 */
@@ -383,20 +432,7 @@ export class AuthService {
     const accounts = await this.scopeAccounts(userId);
     return {
       ...user,
-      eveAccounts: accounts.map((a) => ({
-        id: a.id,
-        characterId: a.characterId,
-        characterName: a.characterName,
-        corporationId: a.corporationId,
-        corporationName: a.corporationName,
-        allianceId: a.allianceId,
-        allianceName: a.allianceName,
-        avatarUrl: a.avatarUrl,
-        scopes: a.scopes,
-        isMain: a.isMain,
-        auth: this.esi.classifyScopes(a.scopes),
-        lastSyncedAt: a.lastSyncedAt,
-      })),
+      eveAccounts: accounts.map((a) => this.toAccountView(a)),
     };
   }
 }

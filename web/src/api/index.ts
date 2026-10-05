@@ -15,6 +15,8 @@ export const authApi = {
   unbind: (id: number) => client.delete(`/auth/accounts/${id}`),
   refresh: (id: number) => client.post(`/auth/accounts/${id}/refresh`),
   accounts: () => client.get('/auth/accounts'),
+  /** EVE 角色身份切换到归属的平台账号（验证平台密码） */
+  switchToPlatform: (password: string) => client.post('/auth/switch-to-platform', { password }),
 };
 
 export const userApi = {

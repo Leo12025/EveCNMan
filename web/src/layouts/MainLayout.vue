@@ -32,6 +32,9 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item v-if="hasPlatformBinding" command="switch-platform">
+                  切换到平台账号
+                </el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -42,14 +45,35 @@
         <router-view />
       </main>
     </div>
+
+    <el-dialog v-model="switchVisible" title="切换到平台账号" width="380px">
+      <p class="switch-tip">
+        当前为 EVE 角色「{{ displayName }}」，已绑定平台账号
+        <b>{{ boundPlatformUsername }}</b>。<br />
+        输入该平台账号密码即可切换到平台角色（拥有名下所有角色的并集权限）。
+      </p>
+      <el-input
+        v-model="platformPassword"
+        type="password"
+        show-password
+        placeholder="平台账号密码"
+        @keyup.enter="confirmSwitch"
+      />
+      <template #footer>
+        <el-button @click="switchVisible = false">取消</el-button>
+        <el-button type="primary" :loading="switching" @click="confirmSwitch">切换</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ArrowDown } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
 import { useUserStore } from '../stores/user';
+import { authApi } from '../api';
 
 const route = useRoute();
 const router = useRouter();
@@ -91,6 +115,40 @@ const initial = computed(() => displayName.value.slice(0, 1).toUpperCase() || 'U
 const roleLabel = computed(() => (store.user?.role === 'super_admin' ? '超管' : '管理员'));
 const isAdmin = computed(() => store.isAdmin);
 
+/** 当前为 EVE 角色身份且已绑定平台账号时，提供「切换到平台账号」入口 */
+const hasPlatformBinding = computed(() =>
+  store.user?.kind === 'eve' &&
+  Array.isArray(store.user.eveAccounts) &&
+  store.user.eveAccounts.some((a) => a.platformBound),
+);
+const boundPlatformUsername = computed(
+  () => store.user?.eveAccounts?.find((a) => a.platformBound)?.platformUsername ?? '',
+);
+
+const switchVisible = ref(false);
+const platformPassword = ref('');
+const switching = ref(false);
+
+async function confirmSwitch() {
+  if (!platformPassword.value) {
+    ElMessage.warning('请输入平台账号密码');
+    return;
+  }
+  switching.value = true;
+  try {
+    const res = await authApi.switchToPlatform(platformPassword.value);
+    store.setToken(res.token);
+    await store.fetchMe();
+    switchVisible.value = false;
+    platformPassword.value = '';
+    ElMessage.success('已切换到平台账号');
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '切换失败');
+  } finally {
+    switching.value = false;
+  }
+}
+
 onMounted(async () => {
   if (store.isLoggedIn && !store.user) {
     try {
@@ -102,7 +160,10 @@ onMounted(async () => {
 });
 
 function onCommand(cmd: string) {
-  if (cmd === 'logout') {
+  if (cmd === 'switch-platform') {
+    platformPassword.value = '';
+    switchVisible.value = true;
+  } else if (cmd === 'logout') {
     store.logout();
     router.push('/login');
   }
@@ -230,5 +291,11 @@ function onCommand(cmd: string) {
   flex: 1;
   overflow: auto;
   padding: 24px;
+}
+.switch-tip {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: #9aa5c1;
+  line-height: 1.6;
 }
 </style>
